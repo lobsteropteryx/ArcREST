@@ -1,26 +1,89 @@
 """
-Note: ntlm3 was obtained from here: https://github.com/trustrachel/python-ntlm3
 """
+from __future__ import print_function
+from __future__ import absolute_import
 import datetime
-import urllib2
-from urlparse import urlparse, urlunparse
-
 try:
     import arcpy
     arcpyFound = True
 except:
     arcpyFound = False
 try:
-    from ntlm3 import HTTPNtlmAuthHandler
+    from ..packages.ntlm3 import HTTPNtlmAuthHandler
     hasNTLM = True
 except:
     hasNTLM = False
 from .._abstract import abstract
-_defaultTokenExpiration = 5 #Minutes
+from ..packages.six.moves.urllib import request
+from ..packages.six.moves.urllib_parse import urlencode, urlparse, urlunparse
+from ..packages.six.moves.http_cookiejar import CookieJar
 
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module='urllib2')
-
+_defaultTokenExpiration = 15 #Minutes
+########################################################################
+class CommunityMapsSecurityHandler(abstract.BaseSecurityHandler):
+    """
+    Handler that allows access to the community maps program
+    """
+    _referer_url = "esri"
+    _method = "TOKEN"
+    _username = None
+    _password = None
+    _agolSecurityHandler = None
+    _securityHandler = None
+    _token = None
+    _expire = _defaultTokenExpiration
+    _proxy_url = None
+    _proxy_port = None
+    #----------------------------------------------------------------------
+    def __init__(self,
+                 url,
+                 username,
+                 password,
+                 proxy_url=None,
+                 proxy_port=None):
+        """ initialize"""
+        self._url = url
+        self._username = username
+        self._password = password
+        self._proxy_url = proxy_url
+        self._proxy_port = proxy_port
+        self._agolSecurityHandler = AGOLTokenSecurityHandler(username=username,
+                                                            password=password)
+        self._referer_url = urlparse(url).netloc
+    @property
+    def securityhandler(self):
+        """ges/set the AGOLTokenSecurityHandler"""
+        return self._agolSecurityHandler
+    @securityhandler.setter
+    def securityhandler(self, value):
+        """get/set the AGOLTokenSecurityHandler"""
+        if isinstance(value, AGOLTokenSecurityHandler):
+            self._agolSecurityHandler = value
+    #----------------------------------------------------------------------
+    @property
+    def token(self):
+        """ generates a token """
+        return self._generateForTokenSecurity()
+    #----------------------------------------------------------------------
+    def _generateForTokenSecurity(self):
+        """ generates a token for a feature service """
+        agolToken = self._agolSecurityHandler.token
+        url = self._url + "/getProxyUserToken"
+        params = {"token" : self._agolSecurityHandler.token,
+                  "contributorUid" : self._contributionUID}
+        res = self._post(url=url, param_dict=params,
+                         additional_headers={ "Referer": self._agolSecurityHandler._referer_url},
+                         proxy_port=self._proxy_port,
+                         proxy_url=self._proxy_url)
+        return res['token']
+    #----------------------------------------------------------------------
+    @property
+    def _contributionUID(self):
+        """"""
+        url = self._url + "/users/" + self._username
+        params = {'f': 'json'}
+        res = self._get(url=url, param_dict=params)
+        return res["ContributorUID"]
 ########################################################################
 class LDAPSecurityHandler(abstract.BaseSecurityHandler):
     """
@@ -35,7 +98,7 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
     _proxy_url = None
     _proxy_port = None
     _org_url = None
-    _url = None    
+    _url = None
     _surl = None
     _referer_url = None
     _parsed_org_url = None
@@ -56,11 +119,11 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
 
         self._initURL(org_url=org_url,
                       referer_url=referer_url)
-        
+
         self.loadusername()
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
@@ -70,9 +133,9 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
-        self._is_portal = portal.isPortal       
+        portal = admin.portals.portalSelf
+
+        self._is_portal = portal.isPortal
     #----------------------------------------------------------------------
     @property
     def method(self):
@@ -98,7 +161,7 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
         if self._url.startswith('http://'):
             self._surl = self._url.replace('http://', 'https://')
         else:
-            self._surl = self._url        
+            self._surl = self._url
 
         parsed_url = urlparse(self._org_url)
         self._parsed_org_url = urlunparse((parsed_url[0],parsed_url[1],"","","",""))#added 7/15/2015
@@ -150,38 +213,37 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
     def handler(self):
         """returns the handler"""
         if self._handler is None:
-            passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
+            passman = request.HTTPPasswordMgrWithDefaultRealm()
             passman.add_password(None,
                                  self._parsed_org_url,
                                  self._login_username,
                                  self.password)
-            self._handler = urllib2.HTTPBasicAuthHandler(passman)
+            self._handler = request.HTTPBasicAuthHandler(passman)
         return self._handler
     #----------------------------------------------------------------------
     @property
     def cookiejar(self):
         """gets the cookiejar"""
         if self._jar is None:
-            from cookielib import CookieJar
             self._jar = CookieJar()
         return self._jar
-    
+
     def loadusername(self):
         if self._username is None:
             from ..manageorg import Administration
             admin = Administration(url=self._org_url,
                                    securityHandler=self,
                                    proxy_url=self._proxy_url,
-                                   proxy_port=self._proxy_port)     
+                                   proxy_port=self._proxy_port)
             portal = admin.portals.portalSelf
-          
+
             if 'username' in portal.user:
                 self._username = portal.user['username']
             else:
                 self._username = self._login_username
-          
-            del portal, admin   
-        
+
+            del portal, admin
+
     #----------------------------------------------------------------------
     @property
     def proxy_url(self):
@@ -202,7 +264,7 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
     def proxy_port(self, value):
         """ sets the proxy port """
         if isinstance(value, int):
-            self._proxy_port = value    
+            self._proxy_port = value
     #----------------------------------------------------------------------
     def portalServerHandler(self, serverUrl, username=None):
         """
@@ -227,8 +289,8 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
         >>> ms = arcrest.ags.MapService(url=msUrl, securityHandler=newSH)
         >>> print ms.mapName
         """
-        
-        
+
+
         from ..manageorg import Administration
         admin = Administration(url=self._org_url,
                                securityHandler=self,
@@ -236,7 +298,7 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
                                proxy_port=self._proxy_port)
 
         token_url = admin.tokenURL
-      
+
         if username is None:
             username = self._login_username
 
@@ -248,16 +310,16 @@ class LDAPSecurityHandler(abstract.BaseSecurityHandler):
                                           proxy_port=self._proxy_port,
                                           jar=self.cookiejar,
                                           handler=self.handler)
-     
+
         pssh = PortalServerSecurityHandler(tokenHandler=ptsh,
                                            serverUrl=serverUrl,
                                            referer=self._referer_url,
                                            jar=self.cookiejar,
                                            handler=self.handler)
-        
-       
+
+
         return pssh
-        
+
 ########################################################################
 class NTLMSecurityHandler(LDAPSecurityHandler):
     """performs NTLM/Kerberos security handling"""
@@ -272,14 +334,14 @@ class NTLMSecurityHandler(LDAPSecurityHandler):
 
         self._initURL(org_url=org_url,
                       referer_url=referer_url)
-        self.loadusername()       
+        self.loadusername()
     #----------------------------------------------------------------------
     @property
     def handler(self):
         """gets the security handler for the class"""
         if hasNTLM:
             if self._handler is None:
-                passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
+                passman = request.HTTPPasswordMgrWithDefaultRealm()
                 passman.add_password(None, self._parsed_org_url, self._login_username, self._password)
                 self._handler = HTTPNtlmAuthHandler.HTTPNtlmAuthHandler(passman)
             return self._handler
@@ -290,7 +352,6 @@ class NTLMSecurityHandler(LDAPSecurityHandler):
     def cookiejar(self):
         """gets the cookiejar"""
         if self._jar is None:
-            from cookielib import CookieJar
             self._jar = CookieJar()
         return self._jar
 ########################################################################
@@ -348,7 +409,7 @@ class PKISecurityHandler(abstract.BaseSecurityHandler):
             if self._url.startswith('http://'):
                 self._surl = self._url.replace('http://', 'https://')
             else:
-                self._surl = self._url        
+                self._surl = self._url
 
             parsed_url = urlparse(self._org_url)
             self._parsed_org_url = urlunparse((parsed_url[0],parsed_url[1],"","","",""))
@@ -356,24 +417,23 @@ class PKISecurityHandler(abstract.BaseSecurityHandler):
         if referer_url is None:
             parsed_org = urlparse(self._org_url)
             self._referer_url = parsed_org.netloc
-            
+
             url = '{}/portals/self'.format( self._url)
-        
+
         parameters = {
             'f': 'json'
         }
-        portal_info = self._do_post(url=url,
-                                    param_dict=parameters,
-                                    securityHandler=self,
-                                    proxy_port=self._proxy_port,
-                                    proxy_url=self._proxy_url)
-
+        portal_info = self._post(url=url,
+                                 param_dict=parameters,
+                                 securityHandler=self,
+                                 proxy_port=self._proxy_port,
+                                 proxy_url=self._proxy_url)
         if 'user' in portal_info:
             if 'username' in portal_info['user']:
-                self._username = portal_info['user']['username']            
+                self._username = portal_info['user']['username']
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
@@ -383,16 +443,16 @@ class PKISecurityHandler(abstract.BaseSecurityHandler):
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
-        self._is_portal = portal.isPortal                  
+        portal = admin.portals.portalSelf
+
+        self._is_portal = portal.isPortal
     #----------------------------------------------------------------------
     @property
     def username(self):
         """ returns the username """
         return self._username
     #----------------------------------------------------------------------
-       
+
     @property
     def org_url(self):
         """gets the org_url"""
@@ -444,7 +504,6 @@ class PKISecurityHandler(abstract.BaseSecurityHandler):
     def cookiejar(self):
         """gets the cookiejar"""
         if self._jar is None:
-            from cookielib import CookieJar
             self._jar = CookieJar()
         return self._jar
     #----------------------------------------------------------------------
@@ -467,12 +526,12 @@ class PKISecurityHandler(abstract.BaseSecurityHandler):
     def proxy_port(self, value):
         """ sets the proxy port """
         if isinstance(value, int):
-            self._proxy_port = value    
+            self._proxy_port = value
     #----------------------------------------------------------------------
-    class HTTPSClientAuthHandler(urllib2.HTTPSHandler):
-        import httplib
+    class HTTPSClientAuthHandler(request.HTTPSHandler):
+        from ..packages.six.moves import http_client as httplib#import httplib
         def __init__(self, key, cert):
-            urllib2.HTTPSHandler.__init__(self)
+            request.HTTPSHandler.__init__(self)
             self.key = key
             self.cert = cert
         def https_open(self, req):
@@ -514,10 +573,10 @@ class PortalServerSecurityHandler(abstract.BaseSecurityHandler):
         if isinstance(tokenHandler, PortalTokenSecurityHandler):
             self._portalTokenHandler = tokenHandler
         elif isinstance(tokenHandler, ArcGISTokenSecurityHandler):
-            self._tokenHandler = tokenHandler        
+            self._tokenHandler = tokenHandler
         else:
             raise AttributeError("Invalid token handler")
-        
+
         self._handler = handler
         self._jar = jar
         self._initURL(serverUrl=serverUrl)
@@ -558,14 +617,14 @@ class PortalServerSecurityHandler(abstract.BaseSecurityHandler):
     def referer(self):
         """gets/sets the referer object"""
         return self._referer
-   
+
     #----------------------------------------------------------------------
     @property
     def cookiejar(self):
         """gets the cookiejar"""
-      
-        return self._jar    
-    
+
+        return self._jar
+
     @cookiejar.setter
     def cookiejar(self, value):
         """gets/sets a cookiejar"""
@@ -574,14 +633,14 @@ class PortalServerSecurityHandler(abstract.BaseSecurityHandler):
     @property
     def handler(self):
         """gets/sets a handler"""
-    
-        return self._handler                        
+
+        return self._handler
     @handler.setter
     def handler(self, value):
         """gets/sets a handler"""
         if value is not None:
-            self._handler = value        
-   
+            self._handler = value
+
     @referer.setter
     def referer(self, value):
         """gets/sets the referer object"""
@@ -590,9 +649,9 @@ class PortalServerSecurityHandler(abstract.BaseSecurityHandler):
            self._referer.lower() != value.lower():
             self._referer = value
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
-        return False        
+        return False
 ########################################################################
 class OAuthSecurityHandler(abstract.BaseSecurityHandler):
     """Handles AGOL OAuth Security
@@ -673,7 +732,7 @@ class OAuthSecurityHandler(abstract.BaseSecurityHandler):
             self._referer_url = referer_url
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
@@ -683,9 +742,9 @@ class OAuthSecurityHandler(abstract.BaseSecurityHandler):
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
-        self._is_portal = portal.isPortal     
+        portal = admin.portals.portalSelf
+
+        self._is_portal = portal.isPortal
     #----------------------------------------------------------------------
     @property
     def method(self):
@@ -794,7 +853,7 @@ class OAuthSecurityHandler(abstract.BaseSecurityHandler):
             "grant_type":grant_type,
             "f" : "json"
         }
-        token = self._do_post(url=token_url,
+        token = self._post(url=token_url,
                               param_dict=params,
                               securityHandler=None,
                               proxy_port=self._proxy_port,
@@ -831,7 +890,7 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
     _server_token_expires_on = None
     _server_token_created_on = None
     _server_expires_in = None
-    _server_url = None  
+    _server_url = None
     _token_url = None
     #----------------------------------------------------------------------
     def __init__(self,proxy_url=None, proxy_port=None):
@@ -871,20 +930,19 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
         parameters = {
             'f': 'json'
         }
-        portal_info = self._do_post(url=url,
-                                    param_dict=parameters,
-                                    securityHandler=self,
-                                    proxy_port=self._proxy_port,
-                                    proxy_url=self._proxy_url)
+        portal_info = self._post(url=url,
+                                 param_dict=parameters,
+                                 securityHandler=self,
+                                 proxy_port=self._proxy_port,
+                                 proxy_url=self._proxy_url)
 
         if 'user' in portal_info:
             if 'username' in portal_info['user']:
                 self._username = portal_info['user']['username']
 
 
-        results = self._do_get(url= self._surl + '/portals/info',
+        results = self._get(url= self._surl + '/portals/info',
                                param_dict={'f':'json'},
-                               header=None,
                                proxy_port=self._proxy_port,
                                proxy_url=self._proxy_url)
         if 'authInfo' in results and 'tokenServicesUrl' in results['authInfo']:
@@ -896,7 +954,7 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
 
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
@@ -906,9 +964,9 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
-        self._is_portal = portal.isPortal              
+        portal = admin.portals.portalSelf
+
+        self._is_portal = portal.isPortal
     #----------------------------------------------------------------------
     @property
     def method(self):
@@ -1003,7 +1061,7 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
             else:
                 self._valid = True
                 self._message = "Server Token Generated"
-        return self._server_token    
+        return self._server_token
     #----------------------------------------------------------------------
     def _generateForServerTokenSecurity(self,
                                         serverURL,
@@ -1018,8 +1076,8 @@ class ArcGISTokenSecurityHandler(abstract.BaseSecurityHandler):
                       'request':'getToken'}
         if expiration is not None:
             query_dict['expiration'] = expiration
-        
-        server_token = self._do_post(url=self._token_url,
+
+        server_token = self._post(url=self._token_url,
                                      param_dict=query_dict,
                                      securityHandler=None,
                                      proxy_port=self._proxy_port,
@@ -1077,14 +1135,14 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
     _expires_in = None
     _proxy_url = None
     _proxy_port = None
-
     #----------------------------------------------------------------------
     def __init__(self,
                  username,
                  password,
                  org_url ="https://www.arcgis.com",
                  token_url=None,
-                 proxy_url=None, proxy_port=None):
+                 proxy_url=None,
+                 proxy_port=None):
         """Constructor"""
         self._username = username
         self._password = password
@@ -1093,6 +1151,19 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
         self._proxy_port = proxy_port
         self._proxy_url = proxy_url
         self._token_expires_on = datetime.datetime.now() + datetime.timedelta(seconds=_defaultTokenExpiration)
+
+        urlInfo = urlparse(org_url)
+
+        if str(urlInfo.netloc).lower() == "www.arcgis.com"> -1:
+            self._initURL(org_url=org_url,token_url=token_url)
+
+            from ..manageorg import Administration
+            admin = Administration(securityHandler=self)
+            portalSelf = admin.portals.portalSelf
+            urlInfo=urlInfo._replace(netloc= "%s.%s" % (portalSelf.urlKey, portalSelf.customBaseUrl))
+            org_url = urlunparse(urlInfo)
+            del portalSelf
+            del admin
         self._initURL(org_url=org_url,token_url=token_url)
     #----------------------------------------------------------------------
     def _initURL(self, org_url=None,
@@ -1118,9 +1189,8 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
 
         if token_url is None:
 
-            results = self._do_get(url= self._surl + '/info',
+            results = self._get(url= self._surl + '/info',
                                    param_dict={'f':'json'},
-                                   header=None,
                                    proxy_port=self._proxy_port,
                                    proxy_url=self._proxy_url)
             if 'authInfo' in results and 'tokenServicesUrl' in results['authInfo']:
@@ -1135,7 +1205,8 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
         self._parsed_org_url = urlunparse((parsed_url[0],parsed_url[1],"","","",""))
 
         if referer_url is None:
-            self._referer_url = parsed_url.netloc    
+            self._referer_url = parsed_url.netloc
+
                 #if referer_url is None or \
             #referer_url.lower().find('www.arcgis.com') > -1:
             #self._referer_url = "arcgis.com"
@@ -1143,7 +1214,7 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
             #self._referer_url = referer_url
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
@@ -1153,10 +1224,10 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
+        portal = admin.portals.portalSelf
+
         self._is_portal = portal.isPortal
-                 
+
 #----------------------------------------------------------------------
     def __getRefererUrl(self, url=None):
         """
@@ -1168,7 +1239,7 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
             "f" : "json",
             "token" : self.token
         }
-        val = self._do_get(url=url, param_dict=params,
+        val = self._get(url=url, param_dict=params,
                            proxy_url=self._proxy_url,
                            proxy_port=self._proxy_port)
         self._referer_url = "arcgis.com"#"http://%s.%s" % (val['urlKey'], val['customBaseUrl'])
@@ -1307,7 +1378,7 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
         if expiration is not None:
             query_dict['expiration'] = str(expiration)
         self._token_created_on = datetime.datetime.now()
-        token = self._do_post(url=tokenUrl,
+        token = self._post(url=tokenUrl,
                               param_dict=query_dict,
                               securityHandler=None,
                               proxy_port=self._proxy_port,
@@ -1317,8 +1388,8 @@ class AGOLTokenSecurityHandler(abstract.BaseSecurityHandler):
             return token
 
 
-        self._token_expires_on = datetime.datetime.fromtimestamp(token['expires'] /1000) - \
-            datetime.timedelta(seconds=1)
+        self._token_expires_on = datetime.datetime.fromtimestamp(token['expires'] / 1000) - \
+            datetime.timedelta(seconds=10)
 
         #if token['expires'] > 86400:
             #seconds = 86400
@@ -1378,7 +1449,7 @@ class AGSTokenSecurityHandler(abstract.BaseSecurityHandler):
             parts = urlparse(org_url)
             p = parts.path[1:].strip().split('/')[0]
             url = "%s://%s/%s/rest/info" % (parts.scheme, parts.netloc, p)
-            result = self._do_get(url=url, param_dict=params,
+            result = self._get(url=url, param_dict=params,
                                   securityHandler=None,
                                   proxy_url=proxy_url,
                                   proxy_port=proxy_port)
@@ -1387,7 +1458,7 @@ class AGSTokenSecurityHandler(abstract.BaseSecurityHandler):
                 self._token_url = result['authInfo']['tokenServicesUrl']
             else:
                 raise Exception("Cannot determine the token url, please pass that parameter.")
-      
+
     #----------------------------------------------------------------------
     @property
     def method(self):
@@ -1484,7 +1555,7 @@ class AGSTokenSecurityHandler(abstract.BaseSecurityHandler):
                       'f': 'json'}
         if expiration is not None:
             query_dict['expiration'] = expiration
-        token = self._do_post(url=tokenUrl,
+        token = self._post(url=tokenUrl,
                               param_dict=query_dict,
                               securityHandler=None,
                               proxy_port=self._proxy_port,
@@ -1565,10 +1636,10 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
         self._proxy_port = proxy_port
         self._proxy_url = proxy_url
         self._token_expires_on = datetime.datetime.now() + datetime.timedelta(seconds=_defaultTokenExpiration)
-    
+
         self._jar = jar
         self._handler = handler
-        
+
         self._initURL(org_url=org_url, token_url=token_url,
                       referer_url=None)
     #----------------------------------------------------------------------
@@ -1597,12 +1668,11 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
             self._surl  =  self._url
 
         if token_url is None:
-            results = self._do_get(url= self._surl + '/portals/info',
-                                   param_dict={'f':'json'},
-                                   securityHandler=None,
-                                   header=None,
-                                   proxy_port=self._proxy_port,
-                                   proxy_url=self._proxy_url)
+            results = self._get(url= self._surl + '/portals/info',
+                                param_dict={'f':'json'},
+                                securityHandler=None,
+                                proxy_port=self._proxy_port,
+                                proxy_url=self._proxy_url)
             if 'authInfo' in results and 'tokenServicesUrl' in results['authInfo']:
 
                 self._token_url = results['authInfo']['tokenServicesUrl']
@@ -1617,24 +1687,24 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
 
         if referer_url is None:
 
-            self._referer_url = parsed_url.netloc    
-        
+            self._referer_url = parsed_url.netloc
+
     _is_portal = None
     #----------------------------------------------------------------------
-    @property            
+    @property
     def is_portal(self):
         if self._is_portal is None:
             self.check_portal()
         return self._is_portal
-    #----------------------------------------------------------------------   
+    #----------------------------------------------------------------------
     def check_portal(self):
         from ..manageorg import Administration
 
         admin = Administration(url=self._org_url,
                                securityHandler=self)
-        portal = admin.portals.portalSelf      
-        
-        self._is_portal = portal.isPortal  
+        portal = admin.portals.portalSelf
+
+        self._is_portal = portal.isPortal
     #----------------------------------------------------------------------
     @property
     def method(self):
@@ -1737,15 +1807,15 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
     @property
     def cookiejar(self):
         """gets the cookiejar"""
-       
-        return self._jar    
+
+        return self._jar
     #----------------------------------------------------------------------
     @cookiejar.setter
     def cookiejar(self, value):
         """gets/sets a cookiejar"""
         if value is not None:
             self._jar = value
-   
+
     #----------------------------------------------------------------------
     @property
     def handler(self):
@@ -1756,7 +1826,7 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
     def handler(self, value):
         """gets/sets a handler"""
         if value is not None:
-            self._handler = value            
+            self._handler = value
     #----------------------------------------------------------------------
     def servertoken(self,serverURL,referer):
         """ returns the server token for the server """
@@ -1795,21 +1865,21 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
         if expiration is not None:
             query_dict['expiration'] = expiration
         secHandler = None
-        
+
         if self.cookiejar is not None:
             secHandler = self
             if secHandler is not None:
                 secHandler._method = "HANDLER"
-    
-        server_token = self._do_post(url=tokenUrl,
-                                     param_dict=query_dict,
-                                     securityHandler=secHandler,
-                                     proxy_port=self._proxy_port,
-                                     proxy_url=self._proxy_url)
+
+        server_token = self._post(url=tokenUrl,
+                                  param_dict=query_dict,
+                                  securityHandler=secHandler,
+                                  proxy_port=self._proxy_port,
+                                  proxy_url=self._proxy_url)
         if self.cookiejar is not None:
             if secHandler is not None:
                 secHandler._method = "TOKEN"
-            
+
         if 'error' in server_token:
             self._server_token = None
             self._server_token_created_on = None
@@ -1830,7 +1900,7 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
     #----------------------------------------------------------------------
     def _generateForTokenSecurity(self,
                                   username, password,
-                                  tokenUrl, 
+                                  tokenUrl,
                                   expiration=None):
         """ generates a token for a feature service """
         query_dict = {'username': username,
@@ -1840,20 +1910,20 @@ class PortalTokenSecurityHandler(abstract.BaseSecurityHandler):
                       'f': 'json'}
         if expiration is not None:
             query_dict['expiration'] = expiration
-        
+
         secHandler = None
         if self.cookiejar is not None:
             secHandler = self
             if secHandler is not None:
                 secHandler._method = "HANDLER"
-        token = self._do_post(url=tokenUrl,
-                              param_dict=query_dict,
-                              securityHandler=secHandler,
-                              proxy_port=self._proxy_port,
-                              proxy_url=self._proxy_url)        
-        if self.cookiejar is not None:   
+        token = self._post(url=tokenUrl,
+                           param_dict=query_dict,
+                           securityHandler=secHandler,
+                           proxy_port=self._proxy_port,
+                           proxy_url=self._proxy_url)
+        if self.cookiejar is not None:
             if secHandler is not None:
-                secHandler._method = "TOKEN"        
+                secHandler._method = "TOKEN"
         if 'error' in token:
             self._token = None
             self._token_created_on = None

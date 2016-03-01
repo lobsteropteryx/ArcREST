@@ -1,6 +1,8 @@
 """
    This sample shows how to update the
    large thumbnail of an item
+   Python 2.x
+   ArcREST 3.0.1
 """
 import arcrest
 from arcresthelper import securityhandlerhelper
@@ -24,12 +26,12 @@ def trace():
 
 def main():
     proxy_port = None
-    proxy_url = None    
+    proxy_url = None
 
     securityinfo = {}
     securityinfo['security_type'] = 'Portal'#LDAP, NTLM, OAuth, Portal, PKI
-    securityinfo['username'] = "<Username>"#<UserName>
-    securityinfo['password'] = "<Password>"#<Password>
+    securityinfo['username'] = ""#<UserName>
+    securityinfo['password'] = ""#<Password>
     securityinfo['org_url'] = "http://www.arcgis.com"
     securityinfo['proxy_url'] = proxy_url
     securityinfo['proxy_port'] = proxy_port
@@ -38,27 +40,25 @@ def main():
     securityinfo['certificatefile'] = None
     securityinfo['keyfile'] = None
     securityinfo['client_id'] = None
-    securityinfo['secret_id'] = None   
-    
-    itemId = "<Item ID>"    
-    
-      
+    securityinfo['secret_id'] = None
+
+    itemId = "" #Item ID
+    pathToImage = r"" #Path to image
+
     try:
         shh = securityhandlerhelper.securityhandlerhelper(securityinfo=securityinfo)
         if shh.valid == False:
             print shh.message
         else:
-            portalAdmin = arcrest.manageorg.Administration(securityHandler=shh.securityhandler)
-            content = portalAdmin.content
-            adminusercontent = content.usercontent()
+            admin = arcrest.manageorg.Administration(securityHandler=shh.securityhandler)
+            content = admin.content
+
             item = content.getItem(itemId)
             itemParams = arcrest.manageorg.ItemParameter()
-           
-            itemParams.largeThumbnail = r"<Path to Image>"
-        
-            print adminusercontent.updateItem(itemId = itemId,
-                                                        updateItemParameters=itemParams,
-                                                        folderId=item.ownerFolder)
+
+            itemParams.largeThumbnail = pathToImage
+
+            print item.userItem.updateItem(itemParameters=itemParams)
     except (common.ArcRestHelperError),e:
         print "error in function: %s" % e[0]['function']
         print "error on line: %s" % e[0]['line']
@@ -74,4 +74,4 @@ def main():
         print "with error message: %s" % synerror
 
 if __name__ == "__main__":
-    main()        
+    main()
