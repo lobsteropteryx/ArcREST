@@ -86,9 +86,9 @@ class System(BaseAGSServer):
                            proxy_url=self._proxy_url,
                            proxy_port=self._proxy_port)
         for direct in res['directories']:
-            url = url + "/%s" % direct["name"]
+            directory_url = url + "/%s" % direct["name"]
             directs.append(
-                ServerDirectory(url=url,
+                ServerDirectory(url=directory_url,
                                 securityHandler=self._securityHandler,
                                 proxy_url=self._proxy_url,
                                 proxy_port=self._proxy_port,
